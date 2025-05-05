@@ -79,40 +79,67 @@ if 'preprocessor' not in st.session_state:
 
 # Function to load sample dataset
 @st.cache_data
-def load_credit_approval_data():
-    """Load the UCI Credit Approval dataset"""
+def load_credit_data():
+    """Load the German Credit dataset"""
     try:
-        # URL for the UCI Credit Approval dataset
-        url = "https://archive.ics.uci.edu/ml/machine-learning-databases/credit-screening/crx.data"
+        # URL for the German Credit dataset
+        url = "https://archive.ics.uci.edu/ml/machine-learning-databases/statlog/german/german.data"
         
-        # Column names (since the original dataset doesn't have headers)
-        column_names = ['A1', 'A2', 'A3', 'A4', 'A5', 'A6', 'A7', 'A8', 
-                         'A9', 'A10', 'A11', 'A12', 'A13', 'A14', 'A15', 'A16']
+        # Column names (these are meaningful names, not A1, A2, etc.)
+        column_names = [
+            'status', 'duration', 'credit_history', 'purpose', 'credit_amount',
+            'savings', 'employment_duration', 'installment_rate', 'personal_status_sex',
+            'other_debtors', 'present_residence', 'property', 'age',
+            'other_installment_plans', 'housing', 'number_credits',
+            'job', 'people_liable', 'telephone', 'foreign_worker', 'credit_risk'
+        ]
         
         # Load the data
-        df = pd.read_csv(url, header=None, names=column_names, na_values='?')
+        df = pd.read_csv(url, sep=' ', header=None, names=column_names)
         
-        # A16 is the target ('+' for approved, '-' for denied)
-        df['A16'] = df['A16'].map({'+': 1, '-': 0})
+        # In this dataset, credit_risk is 1 for good credit and 2 for bad credit
+        # Let's transform it to 1 for approved (good credit) and 0 for denied (bad credit)
+        df['credit_risk'] = df['credit_risk'].map({1: 1, 2: 0})
         
         return df
     except Exception as e:
         st.error(f"Error loading dataset: {e}")
         # Return a dummy dataset in case of error
-        dummy_data = pd.DataFrame(np.random.rand(100, 15), columns=[f'A{i}' for i in range(1, 16)])
-        dummy_data['A16'] = np.random.randint(0, 2, size=100)
+        dummy_data = pd.DataFrame(np.random.rand(100, 20), columns=column_names[:-1])
+        dummy_data['credit_risk'] = np.random.randint(0, 2, size=100)
         return dummy_data
 
+# Function to load South German Credit dataset (alternative with more features)
+@st.cache_data
+def load_south_german_credit():
+    """Load the South German Credit dataset"""
+    try:
+        url = "https://raw.githubusercontent.com/FrancescoBontempo/credit-risk-analysis/main/data/SouthGermanCredit.csv"
+        df = pd.read_csv(url)
+        
+        # Rename the target column to maintain consistency with our code
+        df = df.rename(columns={'Class': 'credit_risk'})
+        
+        # In this dataset, credit_risk is 0 for good credit and 1 for bad credit
+        # Let's transform it to 1 for approved (good credit) and 0 for denied (bad credit)
+        df['credit_risk'] = df['credit_risk'].map({0: 1, 1: 0})
+        
+        return df
+    except Exception as e:
+        st.error(f"Error loading South German Credit dataset: {e}")
+        # Return the other dataset as a fallback
+        return load_credit_data()
+
 # Function to preprocess data
-def preprocess_data(df):
+def preprocess_data(df, target_column='credit_risk'):
     """Preprocess the data for modeling"""
     # Define target
-    y = df['A16']
-    X = df.drop('A16', axis=1)
+    y = df[target_column]
+    X = df.drop(target_column, axis=1)
     
     # Split features into categorical and numerical
-    categorical_features = X.select_dtypes(include=['object']).columns.tolist()
-    numerical_features = X.select_dtypes(exclude=['object']).columns.tolist()
+    categorical_features = X.select_dtypes(include=['object', 'category']).columns.tolist()
+    numerical_features = X.select_dtypes(include=['int64', 'float64']).columns.tolist()
     
     # Create preprocessing pipelines for both numerical and categorical data
     numerical_transformer = Pipeline(steps=[
@@ -235,7 +262,92 @@ page = st.sidebar.radio("Go to", ["Data Overview", "Model Training", "Model Eval
 
 # Load dataset
 if st.session_state.dataset is None:
-    st.session_state.dataset = load_credit_approval_data()
+    st.session_state.dataset = load_credit_data()
+
+categorical_mappings = {
+    'status': {
+        'A11': '< 0 DM',
+        'A12': '0 <= ... < 200 DM',
+        'A13': '>= 200 DM',
+        'A14': 'no checking account'
+    },
+    'credit_history': {
+        'A30': 'no credits taken/all credits paid back duly',
+        'A31': 'all credits at this bank paid back duly',
+        'A32': 'existing credits paid back duly till now',
+        'A33': 'delay in paying off in the past',
+        'A34': 'critical account/other credits existing (not at this bank)'
+    },
+    'purpose': {
+        'A40': 'car (new)',
+        'A41': 'car (used)',
+        'A42': 'furniture/equipment',
+        'A43': 'radio/television',
+        'A44': 'domestic appliances',
+        'A45': 'repairs',
+        'A46': 'education',
+        'A47': 'vacation',
+        'A48': 'retraining',
+        'A49': 'business',
+        'A410': 'others'
+    },
+    'savings': {
+        'A61': '< 100 DM',
+        'A62': '100 <= ... < 500 DM',
+        'A63': '500 <= ... < 1000 DM',
+        'A64': '>= 1000 DM',
+        'A65': 'unknown/no savings account'
+    },
+    'employment_duration': {
+        'A71': 'unemployed',
+        'A72': '< 1 year',
+        'A73': '1 <= ... < 4 years',
+        'A74': '4 <= ... < 7 years',
+        'A75': '>= 7 years'
+    },
+    'personal_status_sex': {
+        'A91': 'male: divorced/separated',
+        'A92': 'female: divorced/separated/married',
+        'A93': 'male: single',
+        'A94': 'male: married/widowed',
+        'A95': 'female: single'
+    },
+    'other_debtors': {
+        'A101': 'none',
+        'A102': 'co-applicant',
+        'A103': 'guarantor'
+    },
+    'property': {
+        'A121': 'real estate',
+        'A122': 'building society savings agreement/life insurance',
+        'A123': 'car or other',
+        'A124': 'unknown/no property'
+    },
+    'other_installment_plans': {
+        'A141': 'bank',
+        'A142': 'stores',
+        'A143': 'none'
+    },
+    'housing': {
+        'A151': 'rent',
+        'A152': 'own',
+        'A153': 'for free'
+    },
+    'job': {
+        'A171': 'unemployed/unskilled - non-resident',
+        'A172': 'unskilled - resident',
+        'A173': 'skilled employee/official',
+        'A174': 'management/self-employed/highly qualified employee/officer'
+    },
+    'telephone': {
+        'A191': 'none',
+        'A192': 'yes, registered under the customer\'s name'
+    },
+    'foreign_worker': {
+        'A201': 'yes',
+        'A202': 'no'
+    }
+}
 
 # Data Overview Page
 if page == "Data Overview":
@@ -252,7 +364,7 @@ if page == "Data Overview":
         st.markdown("</div>", unsafe_allow_html=True)
     
     with col2:
-        approval_rate = df['A16'].mean() * 100
+        approval_rate = df['credit_risk'].mean() * 100
         st.markdown("<div class='metric-card'>", unsafe_allow_html=True)
         st.markdown(f"<p class='metric-value'>{approval_rate:.2f}%</p>", unsafe_allow_html=True)
         st.markdown("<p class='metric-label'>Approval Rate</p>", unsafe_allow_html=True)
@@ -283,8 +395,8 @@ if page == "Data Overview":
     
     # Choose a column to visualize
     numeric_cols = df.select_dtypes(exclude=['object']).columns.tolist()
-    if 'A16' in numeric_cols:
-        numeric_cols.remove('A16')
+    if 'credit_risk' in numeric_cols:
+        numeric_cols.remove('credit_risk')
     
     categorical_cols = df.select_dtypes(include=['object']).columns.tolist()
     
@@ -295,7 +407,7 @@ if page == "Data Overview":
         if numeric_cols:
             selected_num_col = st.selectbox("Select a numeric feature", numeric_cols)
             fig, ax = plt.subplots(figsize=(10, 6))
-            sns.histplot(data=df, x=selected_num_col, hue='A16', kde=True, ax=ax)
+            sns.histplot(data=df, x=selected_num_col, hue='credit_risk', kde=True, ax=ax)
             ax.set_title(f"Distribution of {selected_num_col} by Approval Status")
             st.pyplot(fig)
     
@@ -306,7 +418,7 @@ if page == "Data Overview":
             fig, ax = plt.subplots(figsize=(10, 6))
             
             # Create count plot
-            counts = df.groupby([selected_cat_col, 'A16']).size().unstack(fill_value=0)
+            counts = df.groupby([selected_cat_col, 'credit_risk']).size().unstack(fill_value=0)
             counts.plot(kind='bar', stacked=True, ax=ax)
             ax.set_title(f"Distribution of {selected_cat_col} by Approval Status")
             ax.set_xlabel(selected_cat_col)
@@ -340,7 +452,7 @@ elif page == "Model Training":
         st.markdown("</div>", unsafe_allow_html=True)
     
     with col2:
-        approval_rate = df['A16'].mean() * 100
+        approval_rate = df['credit_risk'].mean() * 100
         st.markdown("<div class='metric-card'>", unsafe_allow_html=True)
         st.markdown(f"<p class='metric-value'>{approval_rate:.2f}%</p>", unsafe_allow_html=True)
         st.markdown("<p class='metric-label'>Approval Rate</p>", unsafe_allow_html=True)
@@ -622,8 +734,8 @@ elif page == "Prediction":
         categorical_features = df.select_dtypes(include=['object']).columns.tolist()
         numerical_features = df.select_dtypes(exclude=['object']).columns.tolist()
         
-        if 'A16' in numerical_features:
-            numerical_features.remove('A16')
+        if 'credit_risk' in numerical_features:
+            numerical_features.remove('credit_risk')
         
         # Create two columns for input fields
         col1, col2 = st.columns(2)
@@ -643,13 +755,27 @@ elif page == "Prediction":
                     step=(max_val - min_val) / 100
                 )
         
-        # Add categorical feature inputs
+        # Add categorical feature inputs with descriptions
         with col2:
             st.subheader("Categorical Features")
             for feature in categorical_features:
-                options = df[feature].dropna().unique().tolist()
-                default_option = options[0] if options else ""
-                input_data[feature] = st.selectbox(f"{feature}", options, index=0)
+                if feature in categorical_mappings:
+                    # Get the mapping for this feature
+                    mapping = categorical_mappings[feature]
+                    # Create a list of descriptions
+                    descriptions = list(mapping.values())
+                    # Set default to the first description
+                    default_description = descriptions[0]
+                    # Create select box with descriptions
+                    selected_description = st.selectbox(f"{feature}", descriptions, index=0)
+                    # Map the selected description back to the code
+                    code = [k for k, v in mapping.items() if v == selected_description][0]
+                    input_data[feature] = code
+                else:
+                    # Fallback if no mapping exists
+                    options = df[feature].dropna().unique().tolist()
+                    default_option = options[0] if options else ""
+                    input_data[feature] = st.selectbox(f"{feature}", options, index=0)
         
         # Create a dataframe from input
         input_df = pd.DataFrame([input_data])
@@ -682,14 +808,12 @@ elif page == "Prediction":
                 col1, col2 = st.columns(2)
                 
                 with col1:
-                    # Display approval status
                     if prediction == 1:
                         st.success("✅ APPROVED")
                     else:
                         st.error("❌ DENIED")
                 
                 with col2:
-                    # Display probability
                     st.markdown("<div class='metric-card'>", unsafe_allow_html=True)
                     st.markdown(f"<p class='metric-value'>{prob*100:.2f}%</p>", unsafe_allow_html=True)
                     st.markdown("<p class='metric-label'>Approval Probability</p>", unsafe_allow_html=True)
