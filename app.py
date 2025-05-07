@@ -12,7 +12,6 @@ from sklearn.tree import DecisionTreeClassifier
 from sklearn.ensemble import RandomForestClassifier
 from sklearn.metrics import accuracy_score, classification_report, confusion_matrix, roc_curve, auc
 import joblib
-import pickle
 import os
 import warnings
 
@@ -77,71 +76,123 @@ if 'y_test' not in st.session_state:
 if 'preprocessor' not in st.session_state:
     st.session_state.preprocessor = None
 
-# Function to load sample dataset
+# Function to load dataset
 @st.cache_data
 def load_credit_data():
-    """Load the German Credit dataset"""
+    """Load the Credit Card Approval Prediction dataset or generate a dummy dataset"""
     try:
-        # URL for the German Credit dataset
-        url = "https://archive.ics.uci.edu/ml/machine-learning-databases/statlog/german/german.data"
+        # Check for local dataset files
+        data_dir = "data"
+        application_path = os.path.join(data_dir, "application_record.csv")
+        credit_path = os.path.join(data_dir, "credit_record.csv")
         
-        # Column names (these are meaningful names, not A1, A2, etc.)
-        column_names = [
-            'status', 'duration', 'credit_history', 'purpose', 'credit_amount',
-            'savings', 'employment_duration', 'installment_rate', 'personal_status_sex',
-            'other_debtors', 'present_residence', 'property', 'age',
-            'other_installment_plans', 'housing', 'number_credits',
-            'job', 'people_liable', 'telephone', 'foreign_worker', 'credit_risk'
-        ]
+        if os.path.exists(application_path) and os.path.exists(credit_path):
+            application_df = pd.read_csv(application_path)
+            credit_df = pd.read_csv(credit_path)
+        else:
+            # Provide instructions for downloading dataset
+            st.warning("""
+            Dataset files not found locally. Please download the Credit Card Approval Prediction dataset from Kaggle:
+            1. Visit https://www.kaggle.com/datasets/rikdifos/credit-card-approval-prediction
+            2. Download `application_record.csv` and `credit_record.csv`
+            3. Place them in a `data` folder in the same directory as this script
+            Falling back to a dummy dataset for now.
+            """)
+            raise FileNotFoundError("Local dataset files not found")
         
-        # Load the data
-        df = pd.read_csv(url, sep=' ', header=None, names=column_names)
+        # Process credit data to determine credit risk
+        credit_df['credit_risk'] = credit_df['STATUS'].apply(
+            lambda x: 0 if x in ['2', '3', '4', '5'] else 1 if x in ['0', '1', 'C'] else np.nan
+        )
         
-        # In this dataset, credit_risk is 1 for good credit and 2 for bad credit
-        # Let's transform it to 1 for approved (good credit) and 0 for denied (bad credit)
-        df['credit_risk'] = df['credit_risk'].map({1: 1, 2: 0})
+        # Aggregate credit risk per ID
+        credit_risk = credit_df.groupby('ID')['credit_risk'].min().reset_index()
+        
+        # Merge with application data
+        df = application_df.merge(credit_risk, on='ID', how='inner')
+        
+        # Drop rows with missing credit_risk
+        df = df.dropna(subset=['credit_risk'])
+        
+        # Convert credit_risk to integer
+        df['credit_risk'] = df['credit_risk'].astype(int)
+        
+        # Clean and preprocess data
+        df = df.drop(['ID'], axis=1)
+        
+        # Rename columns
+        df = df.rename(columns={
+            'CODE_GENDER': 'gender',
+            'FLAG_OWN_CAR': 'own_car',
+            'FLAG_OWN_REALTY': 'own_realty',
+            'CNT_CHILDREN': 'children_count',
+            'AMT_INCOME_TOTAL': 'income_total',
+            'NAME_INCOME_TYPE': 'income_type',
+            'NAME_EDUCATION_TYPE': 'education',
+            'NAME_FAMILY_STATUS': 'family_status',
+            'NAME_HOUSING_TYPE': 'housing_type',
+            'DAYS_BIRTH': 'days_birth',
+            'DAYS_EMPLOYED': 'days_employed',
+            'FLAG_MOBIL': 'has_mobile',
+            'FLAG_WORK_PHONE': 'work_phone',
+            'FLAG_PHONE': 'phone',
+            'FLAG_EMAIL': 'email',
+            'OCCUPATION_TYPE': 'occupation',
+            'CNT_FAM_MEMBERS': 'family_members'
+        })
+        
+        # Convert days to years
+        df['age_years'] = -df['days_birth'] / 365.25
+        df['employment_years'] = -df['days_employed'] / 365.25
+        df = df.drop(['days_birth', 'days_employed'], axis=1)
+        
+        # Handle unrealistic employment years
+        df.loc[df['employment_years'] < 0, 'employment_years'] = 0
+        
+        # Convert binary columns to strings
+        df['gender'] = df['gender'].map({'M': 'Male', 'F': 'Female'})
+        df['own_car'] = df['own_car'].map({'Y': 'Yes', 'N': 'No'})
+        df['own_realty'] = df['own_realty'].map({'Y': 'Yes', 'N': 'No'})
+        df['has_mobile'] = df['has_mobile'].map({1: 'Yes', 0: 'No'})
+        df['work_phone'] = df['work_phone'].map({1: 'Yes', 0: 'No'})
+        df['phone'] = df['phone'].map({1: 'Yes', 0: 'No'})
+        df['email'] = df['email'].map({1: 'Yes', 0: 'No'})
         
         return df
     except Exception as e:
-        st.error(f"Error loading dataset: {e}")
-        # Return a dummy dataset in case of error
-        dummy_data = pd.DataFrame(np.random.rand(100, 20), columns=column_names[:-1])
-        dummy_data['credit_risk'] = np.random.randint(0, 2, size=100)
+        st.error(f"Error loading dataset: {e}. Using dummy dataset instead.")
+        # Generate a dummy dataset
+        dummy_data = pd.DataFrame({
+            'gender': np.random.choice(['Male', 'Female'], 1000),
+            'own_car': np.random.choice(['Yes', 'No'], 1000),
+            'own_realty': np.random.choice(['Yes', 'No'], 1000),
+            'children_count': np.random.randint(0, 5, 1000),
+            'income_total': np.random.uniform(20000, 200000, 1000),
+            'income_type': np.random.choice(['Working', 'Commercial associate', 'Pensioner', 'State servant', 'Student'], 1000),
+            'education': np.random.choice(['Secondary / secondary special', 'Higher education', 'Incomplete higher'], 1000),
+            'family_status': np.random.choice(['Married', 'Single / not married', 'Civil marriage', 'Widow', 'Separated'], 1000),
+            'housing_type': np.random.choice(['House / apartment', 'Rented apartment', 'Municipal apartment'], 1000),
+            'has_mobile': np.random.choice(['Yes', 'No'], 1000),
+            'work_phone': np.random.choice(['Yes', 'No'], 1000),
+            'phone': np.random.choice(['Yes', 'No'], 1000),
+            'email': np.random.choice(['Yes', 'No'], 1000),
+            'occupation': np.random.choice(['Laborers', 'Managers', 'Sales staff', 'Core staff'], 1000),
+            'family_members': np.random.randint(1, 6, 1000),
+            'age_years': np.random.uniform(20, 70, 1000),
+            'employment_years': np.random.uniform(0, 40, 1000),
+            'credit_risk': np.random.randint(0, 2, 1000)
+        })
         return dummy_data
-
-# Function to load South German Credit dataset (alternative with more features)
-@st.cache_data
-def load_south_german_credit():
-    """Load the South German Credit dataset"""
-    try:
-        url = "https://raw.githubusercontent.com/FrancescoBontempo/credit-risk-analysis/main/data/SouthGermanCredit.csv"
-        df = pd.read_csv(url)
-        
-        # Rename the target column to maintain consistency with our code
-        df = df.rename(columns={'Class': 'credit_risk'})
-        
-        # In this dataset, credit_risk is 0 for good credit and 1 for bad credit
-        # Let's transform it to 1 for approved (good credit) and 0 for denied (bad credit)
-        df['credit_risk'] = df['credit_risk'].map({0: 1, 1: 0})
-        
-        return df
-    except Exception as e:
-        st.error(f"Error loading South German Credit dataset: {e}")
-        # Return the other dataset as a fallback
-        return load_credit_data()
 
 # Function to preprocess data
 def preprocess_data(df, target_column='credit_risk'):
     """Preprocess the data for modeling"""
-    # Define target
     y = df[target_column]
     X = df.drop(target_column, axis=1)
     
-    # Split features into categorical and numerical
-    categorical_features = X.select_dtypes(include=['object', 'category']).columns.tolist()
+    categorical_features = X.select_dtypes(include=['object']).columns.tolist()
     numerical_features = X.select_dtypes(include=['int64', 'float64']).columns.tolist()
     
-    # Create preprocessing pipelines for both numerical and categorical data
     numerical_transformer = Pipeline(steps=[
         ('imputer', SimpleImputer(strategy='median')),
         ('scaler', StandardScaler())
@@ -152,40 +203,39 @@ def preprocess_data(df, target_column='credit_risk'):
         ('onehot', OneHotEncoder(handle_unknown='ignore'))
     ])
     
-    # Combine preprocessing steps
     preprocessor = ColumnTransformer(
         transformers=[
             ('num', numerical_transformer, numerical_features),
             ('cat', categorical_transformer, categorical_features)
         ])
     
-    # Split the data
     X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=42)
     
     return X_train, X_test, y_train, y_test, preprocessor
 
 # Function to train models
-def train_models(X_train, y_train, preprocessor):
+def train_models(X_train, y_train, preprocessor, dt_max_depth, rf_n_estimators, rf_max_depth):
     """Train decision tree, random forest, and meta learner models"""
     models = {}
     
-    # Create and fit decision tree pipeline
     dt_model = Pipeline(steps=[
         ('preprocessor', preprocessor),
-        ('classifier', DecisionTreeClassifier(random_state=42))
+        ('classifier', DecisionTreeClassifier(max_depth=dt_max_depth, random_state=42))
     ])
     dt_model.fit(X_train, y_train)
     models['Decision Tree'] = dt_model
     
-    # Create and fit random forest pipeline
     rf_model = Pipeline(steps=[
         ('preprocessor', preprocessor),
-        ('classifier', RandomForestClassifier(random_state=42, n_estimators=100))
+        ('classifier', RandomForestClassifier(
+            n_estimators=rf_n_estimators,
+            max_depth=rf_max_depth,
+            random_state=42
+        ))
     ])
     rf_model.fit(X_train, y_train)
     models['Random Forest'] = rf_model
     
-    # Meta learner (averaging predictions)
     dt_preds = dt_model.predict_proba(X_train)[:, 1]
     rf_preds = rf_model.predict_proba(X_train)[:, 1]
     
@@ -200,23 +250,19 @@ def train_models(X_train, y_train, preprocessor):
 def evaluate_model(model, X_test, y_test, preprocessor=None, is_meta=False):
     """Evaluate the model and return metrics"""
     if is_meta:
-        # For meta model, we need to get base model predictions first
         dt_preds = st.session_state.models['Decision Tree'].predict_proba(X_test)[:, 1]
         rf_preds = st.session_state.models['Random Forest'].predict_proba(X_test)[:, 1]
         meta_features = np.column_stack((dt_preds, rf_preds))
         y_pred = model.predict(meta_features)
         y_pred_proba = model.predict_proba(meta_features)[:, 1]
     else:
-        # For base models
         y_pred = model.predict(X_test)
         y_pred_proba = model.predict_proba(X_test)[:, 1]
     
-    # Compute metrics
     accuracy = accuracy_score(y_test, y_pred)
     report = classification_report(y_test, y_pred, output_dict=True)
     conf_matrix = confusion_matrix(y_test, y_pred)
     
-    # Compute ROC curve
     fpr, tpr, _ = roc_curve(y_test, y_pred_proba)
     roc_auc = auc(fpr, tpr)
     
@@ -228,14 +274,9 @@ def save_models(models, preprocessor):
     if not os.path.exists('models'):
         os.makedirs('models')
     
-    # Save base models
     joblib.dump(models['Decision Tree'], 'models/decision_tree_model.pkl')
     joblib.dump(models['Random Forest'], 'models/random_forest_model.pkl')
-    
-    # Save meta model
     joblib.dump(models['Meta Learner'], 'models/meta_learner_model.pkl')
-    
-    # Save preprocessor
     joblib.dump(preprocessor, 'models/preprocessor.pkl')
     
     st.success("All models saved successfully!")
@@ -250,7 +291,6 @@ def load_saved_models():
         models['Meta Learner'] = joblib.load('models/meta_learner_model.pkl')
         preprocessor = joblib.load('models/preprocessor.pkl')
         st.success("Models loaded successfully!")
-        
         return models, preprocessor
     except:
         st.error("No saved models found. Please train models first.")
@@ -264,88 +304,84 @@ page = st.sidebar.radio("Go to", ["Data Overview", "Model Training", "Model Eval
 if st.session_state.dataset is None:
     st.session_state.dataset = load_credit_data()
 
+# Categorical mappings
 categorical_mappings = {
-    'status': {
-        'A11': '< 0 DM',
-        'A12': '0 <= ... < 200 DM',
-        'A13': '>= 200 DM',
-        'A14': 'no checking account'
+    'gender': {
+        'Male': 'Male',
+        'Female': 'Female'
     },
-    'credit_history': {
-        'A30': 'no credits taken/all credits paid back duly',
-        'A31': 'all credits at this bank paid back duly',
-        'A32': 'existing credits paid back duly till now',
-        'A33': 'delay in paying off in the past',
-        'A34': 'critical account/other credits existing (not at this bank)'
+    'own_car': {
+        'Yes': 'Yes',
+        'No': 'No'
     },
-    'purpose': {
-        'A40': 'car (new)',
-        'A41': 'car (used)',
-        'A42': 'furniture/equipment',
-        'A43': 'radio/television',
-        'A44': 'domestic appliances',
-        'A45': 'repairs',
-        'A46': 'education',
-        'A47': 'vacation',
-        'A48': 'retraining',
-        'A49': 'business',
-        'A410': 'others'
+    'own_realty': {
+        'Yes': 'Yes',
+        'No': 'No'
     },
-    'savings': {
-        'A61': '< 100 DM',
-        'A62': '100 <= ... < 500 DM',
-        'A63': '500 <= ... < 1000 DM',
-        'A64': '>= 1000 DM',
-        'A65': 'unknown/no savings account'
+    'income_type': {
+        'Working': 'Working',
+        'Commercial associate': 'Commercial associate',
+        'Pensioner': 'Pensioner',
+        'State servant': 'State servant',
+        'Student': 'Student'
     },
-    'employment_duration': {
-        'A71': 'unemployed',
-        'A72': '< 1 year',
-        'A73': '1 <= ... < 4 years',
-        'A74': '4 <= ... < 7 years',
-        'A75': '>= 7 years'
+    'education': {
+        'Secondary': 'Secondary / secondary special',
+        'Higher education': 'Higher education',
+        'Incomplete higher': 'Incomplete higher',
+        'Lower secondary': 'Lower secondary',
+        'Academic degree': 'Academic degree'
     },
-    'personal_status_sex': {
-        'A91': 'male: divorced/separated',
-        'A92': 'female: divorced/separated/married',
-        'A93': 'male: single',
-        'A94': 'male: married/widowed',
-        'A95': 'female: single'
+    'family_status': {
+        'Married': 'Married',
+        'Single': 'Single / not married',
+        'Civil marriage': 'Civil marriage',
+        'Widow': 'Widow',
+        'Separated': 'Separated'
     },
-    'other_debtors': {
-        'A101': 'none',
-        'A102': 'co-applicant',
-        'A103': 'guarantor'
+    'housing_type': {
+        'House / apartment': 'House / apartment',
+        'Rented apartment': 'Rented apartment',
+        'Municipal apartment': 'Municipal apartment',
+        'With parents': 'With parents',
+        'Co-op apartment': 'Co-op apartment',
+        'Office apartment': 'Office apartment'
     },
-    'property': {
-        'A121': 'real estate',
-        'A122': 'building society savings agreement/life insurance',
-        'A123': 'car or other',
-        'A124': 'unknown/no property'
+    'has_mobile': {
+        'Yes': 'Yes',
+        'No': 'No'
     },
-    'other_installment_plans': {
-        'A141': 'bank',
-        'A142': 'stores',
-        'A143': 'none'
+    'work_phone': {
+        'Yes': 'Yes',
+        'No': 'No'
     },
-    'housing': {
-        'A151': 'rent',
-        'A152': 'own',
-        'A153': 'for free'
+    'phone': {
+        'Yes': 'Yes',
+        'No': 'No'
     },
-    'job': {
-        'A171': 'unemployed/unskilled - non-resident',
-        'A172': 'unskilled - resident',
-        'A173': 'skilled employee/official',
-        'A174': 'management/self-employed/highly qualified employee/officer'
+    'email': {
+        'Yes': 'Yes',
+        'No': 'No'
     },
-    'telephone': {
-        'A191': 'none',
-        'A192': 'yes, registered under the customer\'s name'
-    },
-    'foreign_worker': {
-        'A201': 'yes',
-        'A202': 'no'
+    'occupation': {
+        'Laborers': 'Laborers',
+        'Core staff': 'Core staff',
+        'Managers': 'Managers',
+        'Sales staff': 'Sales staff',
+        'High skill tech staff': 'High skill tech staff',
+        'Accountants': 'Accountants',
+        'Medicine staff': 'Medicine staff',
+        'Private service staff': 'Private service staff',
+        'Drivers': 'Drivers',
+        'Security staff': 'Security staff',
+        'Cleaning staff': 'Cleaning staff',
+        'Cooking staff': 'Cooking staff',
+        'Waiters/barmen staff': 'Waiters/barmen staff',
+        'Low-skill Laborers': 'Low-skill Laborers',
+        'HR staff': 'HR staff',
+        'Secretaries': 'Secretaries',
+        'IT staff': 'IT staff',
+        'Realty agents': 'Realty agents'
     }
 }
 
@@ -355,7 +391,6 @@ if page == "Data Overview":
     
     df = st.session_state.dataset
     
-    # Display dataset info
     col1, col2 = st.columns(2)
     with col1:
         st.markdown("<div class='metric-card'>", unsafe_allow_html=True)
@@ -370,12 +405,10 @@ if page == "Data Overview":
         st.markdown("<p class='metric-label'>Approval Rate</p>", unsafe_allow_html=True)
         st.markdown("</div>", unsafe_allow_html=True)
     
-    # Display raw data with toggle
     if st.checkbox("Show Raw Data"):
         st.subheader("Raw Data")
         st.dataframe(df.head(100))
     
-    # Data summary
     st.markdown("<h3 class='sub-header'>Data Summary</h3>", unsafe_allow_html=True)
     col1, col2 = st.columns(2)
     
@@ -385,15 +418,11 @@ if page == "Data Overview":
     
     with col2:
         st.subheader("Categorical Features")
-        cat_summary = {}
-        for col in df.select_dtypes(include=['object']).columns:
-            cat_summary[col] = df[col].value_counts().shape[0]
+        cat_summary = {col: df[col].value_counts().shape[0] for col in df.select_dtypes(include=['object']).columns}
         st.dataframe(pd.DataFrame(cat_summary.items(), columns=['Feature', 'Unique Values']))
     
-    # Visualizations
     st.markdown("<h3 class='sub-header'>Data Visualizations</h3>", unsafe_allow_html=True)
     
-    # Choose a column to visualize
     numeric_cols = df.select_dtypes(exclude=['object']).columns.tolist()
     if 'credit_risk' in numeric_cols:
         numeric_cols.remove('credit_risk')
@@ -416,8 +445,6 @@ if page == "Data Overview":
         if categorical_cols:
             selected_cat_col = st.selectbox("Select a categorical feature", categorical_cols)
             fig, ax = plt.subplots(figsize=(10, 6))
-            
-            # Create count plot
             counts = df.groupby([selected_cat_col, 'credit_risk']).size().unstack(fill_value=0)
             counts.plot(kind='bar', stacked=True, ax=ax)
             ax.set_title(f"Distribution of {selected_cat_col} by Approval Status")
@@ -426,10 +453,9 @@ if page == "Data Overview":
             ax.legend(["Denied", "Approved"])
             st.pyplot(fig)
     
-    # Correlation matrix for numeric features
     st.subheader("Correlation Matrix")
     numeric_df = df.select_dtypes(exclude=['object'])
-    if numeric_df.shape[1] > 1:  # Only plot if there are at least 2 numeric columns
+    if numeric_df.shape[1] > 1:
         fig, ax = plt.subplots(figsize=(10, 8))
         correlation = numeric_df.corr()
         sns.heatmap(correlation, annot=True, cmap='coolwarm', fmt=".2f", ax=ax)
@@ -441,7 +467,6 @@ if page == "Data Overview":
 elif page == "Model Training":
     st.markdown("<h2 class='sub-header'>Model Training</h2>", unsafe_allow_html=True)
     
-    # Show dataset dimensions and approval rate
     df = st.session_state.dataset
     
     col1, col2, col3 = st.columns(3)
@@ -465,7 +490,6 @@ elif page == "Model Training":
         st.markdown("<p class='metric-label'>Number of Features</p>", unsafe_allow_html=True)
         st.markdown("</div>", unsafe_allow_html=True)
     
-    # Training parameters
     st.subheader("Training Parameters")
     
     col1, col2 = st.columns(2)
@@ -478,59 +502,27 @@ elif page == "Model Training":
         rf_n_estimators = st.slider("Random Forest Number of Trees", min_value=50, max_value=300, value=100, step=10)
         rf_max_depth = st.slider("Random Forest Max Depth", min_value=2, max_value=20, value=10)
     
-    # Train models button
     if st.button("Train Models"):
         with st.spinner("Training models, please wait..."):
-            # Preprocess data
             X_train, X_test, y_train, y_test, preprocessor = preprocess_data(df)
             
-            # Store test data for later evaluation
             st.session_state.X_test = X_test
             st.session_state.y_test = y_test
             st.session_state.preprocessor = preprocessor
             
-            # Train base models
-            dt_model = Pipeline(steps=[
-                ('preprocessor', preprocessor),
-                ('classifier', DecisionTreeClassifier(max_depth=dt_max_depth, random_state=42))
-            ])
-            dt_model.fit(X_train, y_train)
-            
-            rf_model = Pipeline(steps=[
-                ('preprocessor', preprocessor),
-                ('classifier', RandomForestClassifier(
-                    n_estimators=rf_n_estimators, 
-                    max_depth=rf_max_depth, 
-                    random_state=42
-                ))
-            ])
-            rf_model.fit(X_train, y_train)
-            
-            # Store models
-            st.session_state.models['Decision Tree'] = dt_model
-            st.session_state.models['Random Forest'] = rf_model
-            
-            # Meta learner 
-            dt_preds = dt_model.predict_proba(X_train)[:, 1]
-            rf_preds = rf_model.predict_proba(X_train)[:, 1]
-            
-            meta_features = np.column_stack((dt_preds, rf_preds))
-            meta_model = DecisionTreeClassifier(max_depth=3, random_state=42)
-            meta_model.fit(meta_features, y_train)
-            
-            st.session_state.models['Meta Learner'] = meta_model
+            st.session_state.models = train_models(
+                X_train, y_train, preprocessor, dt_max_depth, rf_n_estimators, rf_max_depth
+            )
             st.session_state.trained = True
             
             st.success("Models trained successfully!")
     
-    # Save models button (only enabled if models are trained)
     if st.session_state.trained:
         if st.button("Save Models"):
             save_models(st.session_state.models, st.session_state.preprocessor)
     else:
         st.info("Train models first before saving.")
     
-    # Option to load pre-trained models
     st.subheader("Load Pre-trained Models")
     if st.button("Load Saved Models"):
         models, preprocessor = load_saved_models()
@@ -546,29 +538,20 @@ elif page == "Model Evaluation":
     if not st.session_state.trained:
         st.warning("No trained models found. Please go to the Model Training page to train models first.")
     else:
-        # Select model to evaluate
         model_names = list(st.session_state.models.keys())
         selected_model = st.selectbox("Select a model to evaluate", model_names)
         
-        # Get the selected model
         model = st.session_state.models[selected_model]
         
-        # Evaluate the model
         if selected_model == "Meta Learner":
             accuracy, report, conf_matrix, fpr, tpr, roc_auc = evaluate_model(
-                model, 
-                st.session_state.X_test, 
-                st.session_state.y_test, 
-                is_meta=True
+                model, st.session_state.X_test, st.session_state.y_test, is_meta=True
             )
         else:
             accuracy, report, conf_matrix, fpr, tpr, roc_auc = evaluate_model(
-                model, 
-                st.session_state.X_test, 
-                st.session_state.y_test
+                model, st.session_state.X_test, st.session_state.y_test
             )
         
-        # Display metrics
         col1, col2, col3 = st.columns(3)
         
         with col1:
@@ -581,17 +564,16 @@ elif page == "Model Evaluation":
             precision = report['1']['precision']
             st.markdown("<div class='metric-card'>", unsafe_allow_html=True)
             st.markdown(f"<p class='metric-value'>{precision*100:.2f}%</p>", unsafe_allow_html=True)
-            st.markdown("<p class='metric-label'>Precision (Approval)</p>", unsafe_allow_html=True)
+            st.markdown("<p class='metric-label'>Precision (Approved)</p>", unsafe_allow_html=True)
             st.markdown("</div>", unsafe_allow_html=True)
         
         with col3:
             recall = report['1']['recall']
             st.markdown("<div class='metric-card'>", unsafe_allow_html=True)
             st.markdown(f"<p class='metric-value'>{recall*100:.2f}%</p>", unsafe_allow_html=True)
-            st.markdown("<p class='metric-label'>Recall (Approval)</p>", unsafe_allow_html=True)
+            st.markdown("<p class='metric-label'>Recall (Approved)</p>", unsafe_allow_html=True)
             st.markdown("</div>", unsafe_allow_html=True)
         
-        # Visualization of results
         col1, col2 = st.columns(2)
         
         with col1:
@@ -618,46 +600,34 @@ elif page == "Model Evaluation":
             ax.legend(loc="lower right")
             st.pyplot(fig)
         
-        # Classification report
         st.subheader("Classification Report")
         report_df = pd.DataFrame(report).transpose()
-        # Filter out the unnecessary rows and columns
         if 'accuracy' in report_df.index:
             report_df = report_df.drop('accuracy')
         if 'macro avg' in report_df.index and 'weighted avg' in report_df.index:
             report_df = report_df.drop(['macro avg', 'weighted avg'])
         
-        # Format the report
         for col in report_df.columns:
             if col != 'support':
                 report_df[col] = report_df[col].apply(lambda x: f"{x*100:.2f}%")
         
-        # Map class labels
         report_df.index = report_df.index.map({'0': 'Denied', '1': 'Approved'})
         
         st.dataframe(report_df)
         
-        # Compare models if there are multiple
         st.subheader("Model Comparison")
         
         model_metrics = {}
         for name in model_names:
             current_model = st.session_state.models[name]
-            
             if name == "Meta Learner":
                 acc, _, _, _, _, auc_score = evaluate_model(
-                    current_model, 
-                    st.session_state.X_test, 
-                    st.session_state.y_test, 
-                    is_meta=True
+                    current_model, st.session_state.X_test, st.session_state.y_test, is_meta=True
                 )
             else:
                 acc, _, _, _, _, auc_score = evaluate_model(
-                    current_model, 
-                    st.session_state.X_test, 
-                    st.session_state.y_test
+                    current_model, st.session_state.X_test, st.session_state.y_test
                 )
-            
             model_metrics[name] = [acc, auc_score]
         
         comparison_df = pd.DataFrame(model_metrics, index=['Accuracy', 'AUC']).transpose()
@@ -666,50 +636,34 @@ elif page == "Model Evaluation":
         
         st.dataframe(comparison_df)
         
-        # If Random Forest model, show feature importance
         if selected_model == "Random Forest":
             st.subheader("Feature Importance")
-            
-            # Extract the random forest classifier from the pipeline
-            rf_classifier = model.named_steps['classifier']
-            
-            # Get feature names after preprocessing (if possible)
             try:
+                rf_classifier = model.named_steps['classifier']
                 preprocessor = model.named_steps['preprocessor']
-                cat_cols = preprocessor.transformers_[1][2]  # Categorical columns
-                num_cols = preprocessor.transformers_[0][2]  # Numerical columns
                 
-                # Get one-hot encoded feature names
-                cat_feature_names = []
-                for cat_col in cat_cols:
-                    unique_values = st.session_state.dataset[cat_col].dropna().unique()
-                    for val in unique_values:
-                        cat_feature_names.append(f"{cat_col}_{val}")
+                feature_names = []
+                for name, _, cols in preprocessor.transformers_:
+                    if name == 'cat':
+                        cat_transformer = preprocessor.named_transformers_['cat']
+                        cat_features = cat_transformer.named_steps['onehot'].get_feature_names_out(cols)
+                        feature_names.extend(cat_features)
+                    else:
+                        feature_names.extend(cols)
                 
-                # Combine with numerical feature names
-                feature_names = list(num_cols) + cat_feature_names
-                
-                # If feature names don't match, use generic names
-                if len(feature_names) != len(rf_classifier.feature_importances_):
-                    feature_names = [f"Feature {i}" for i in range(len(rf_classifier.feature_importances_))]
-                
-                # Create a dataframe for feature importance
                 feature_importance = pd.DataFrame({
                     'Feature': feature_names,
                     'Importance': rf_classifier.feature_importances_
                 })
                 
-                # Sort by importance
                 feature_importance = feature_importance.sort_values('Importance', ascending=False).head(15)
                 
-                # Plot
                 fig, ax = plt.subplots(figsize=(10, 8))
                 sns.barplot(x='Importance', y='Feature', data=feature_importance, ax=ax)
                 ax.set_title('Top 15 Feature Importance')
                 st.pyplot(fig)
-                
             except:
-                st.error("Could not extract feature importance. This could be due to the preprocessing pipeline structure.")
+                st.error("Could not extract feature importance.")
 
 # Prediction Page
 elif page == "Prediction":
@@ -718,29 +672,19 @@ elif page == "Prediction":
     if not st.session_state.trained:
         st.warning("No trained models found. Please go to the Model Training page to train models first.")
     else:
-        # Select model for prediction
-        model_names = list(st.session_state.models.keys())
-        selected_model = st.selectbox("Select a model for prediction", model_names)
-        
+        selected_model = "Meta Learner"
         st.markdown("<h3 class='sub-header'>Enter Application Details</h3>", unsafe_allow_html=True)
         
-        # Get a sample from the dataset for reference
-        df = st.session_state.dataset
-        
-        # Create input fields based on dataset columns (excluding target variable)
+        df = df = st.session_state.dataset
         input_data = {}
         
-        # Group features by type for better organization
         categorical_features = df.select_dtypes(include=['object']).columns.tolist()
         numerical_features = df.select_dtypes(exclude=['object']).columns.tolist()
-        
         if 'credit_risk' in numerical_features:
             numerical_features.remove('credit_risk')
         
-        # Create two columns for input fields
         col1, col2 = st.columns(2)
         
-        # Add numerical feature inputs
         with col1:
             st.subheader("Numerical Features")
             for feature in numerical_features:
@@ -748,53 +692,44 @@ elif page == "Prediction":
                 max_val = float(df[feature].max())
                 default_val = float(df[feature].median())
                 input_data[feature] = st.slider(
-                    f"{feature}", 
+                    f"{feature.replace('_', ' ').title()}", 
                     min_value=min_val,
                     max_value=max_val,
                     value=default_val,
                     step=(max_val - min_val) / 100
                 )
         
-        # Add categorical feature inputs with descriptions
         with col2:
             st.subheader("Categorical Features")
             for feature in categorical_features:
                 if feature in categorical_mappings:
-                    # Get the mapping for this feature
                     mapping = categorical_mappings[feature]
-                    # Create a list of descriptions
                     descriptions = list(mapping.values())
-                    # Set default to the first description
-                    default_description = descriptions[0]
-                    # Create select box with descriptions
-                    selected_description = st.selectbox(f"{feature}", descriptions, index=0)
-                    # Map the selected description back to the code
-                    code = [k for k, v in mapping.items() if v == selected_description][0]
-                    input_data[feature] = code
+                    selected_description = st.selectbox(
+                        f"{feature.replace('_', ' ').title()}", 
+                        descriptions, 
+                        index=0
+                    )
+                    input_data[feature] = selected_description
                 else:
-                    # Fallback if no mapping exists
                     options = df[feature].dropna().unique().tolist()
-                    default_option = options[0] if options else ""
-                    input_data[feature] = st.selectbox(f"{feature}", options, index=0)
+                    input_data[feature] = st.selectbox(
+                        f"{feature.replace('_', ' ').title()}", 
+                        options, 
+                        index=0
+                    )
         
-        # Create a dataframe from input
         input_df = pd.DataFrame([input_data])
         
-        # Make prediction button
         if st.button("Predict Approval Status"):
             with st.spinner("Generating prediction..."):
-                # Get the selected model
                 model = st.session_state.models[selected_model]
                 
-                # Make prediction
                 if selected_model == "Meta Learner":
-                    # Get base model predictions
                     dt_model = st.session_state.models['Decision Tree']
                     rf_model = st.session_state.models['Random Forest']
-                    
                     dt_pred = dt_model.predict_proba(input_df)[:, 1]
                     rf_pred = rf_model.predict_proba(input_df)[:, 1]
-                    
                     meta_features = np.column_stack((dt_pred, rf_pred))
                     prediction = model.predict(meta_features)[0]
                     prob = model.predict_proba(meta_features)[0][1]
@@ -802,7 +737,6 @@ elif page == "Prediction":
                     prediction = model.predict(input_df)[0]
                     prob = model.predict_proba(input_df)[0][1]
                 
-                # Display result
                 st.subheader("Prediction Result")
                 
                 col1, col2 = st.columns(2)
@@ -819,127 +753,71 @@ elif page == "Prediction":
                     st.markdown("<p class='metric-label'>Approval Probability</p>", unsafe_allow_html=True)
                     st.markdown("</div>", unsafe_allow_html=True)
                 
-                # Visualization of probability
                 st.subheader("Approval Probability")
                 
                 fig, ax = plt.subplots(figsize=(10, 2))
-                
-                # Create a simple gauge chart
                 ax.barh(0, 100, height=0.5, color='lightgray', alpha=0.3)
                 ax.barh(0, prob*100, height=0.5, color='green' if prediction == 1 else 'red')
-                
-                # Add threshold line at 50%
                 ax.axvline(x=50, color='black', linestyle='--', alpha=0.7)
-                
-                # Remove y-axis ticks and labels
                 ax.set_yticks([])
-                
-                # Set x-axis limits and ticks
                 ax.set_xlim(0, 100)
                 ax.set_xticks([0, 25, 50, 75, 100])
                 ax.set_xticklabels(['0%', '25%', '50%', '75%', '100%'])
-                
-                # Add labels for low/high probability regions
                 ax.text(25, -0.5, 'Low Probability', ha='center', va='top')
                 ax.text(75, -0.5, 'High Probability', ha='center', va='top')
-                
-                # Remove box around plot
                 ax.spines['top'].set_visible(False)
                 ax.spines['right'].set_visible(False)
                 ax.spines['left'].set_visible(False)
                 
                 st.pyplot(fig)
                 
-                # Explain the factors influencing the decision
-                st.subheader("Factors Influencing the Decision")
-                
-                # For random forest, we can show feature importance for this prediction
                 if selected_model == "Random Forest":
+                    st.subheader("Factors Influencing the Decision")
                     try:
-                        # Extract the random forest classifier from the pipeline
                         rf_classifier = model.named_steps['classifier']
                         preprocessor = model.named_steps['preprocessor']
                         
-                        # Transform the input data
                         transformed_input = preprocessor.transform(input_df)
                         
-                        # Calculate feature contributions
-                        feature_contributions = []
-                        
-                        # Get feature names (simplistic approach)
                         feature_names = []
                         for name, _, cols in preprocessor.transformers_:
                             if name == 'cat':
-                                # For categorical features, get one-hot encoded names
-                                for col in cols:
-                                    unique_values = df[col].dropna().unique()
-                                    for val in unique_values:
-                                        feature_names.append(f"{col}_{val}")
+                                cat_transformer = preprocessor.named_transformers_['cat']
+                                cat_features = cat_transformer.named_steps['onehot'].get_feature_names_out(cols)
+                                feature_names.extend(cat_features)
                             else:
-                                # For numerical features, just use the column names
                                 feature_names.extend(cols)
                         
-                        # If feature names don't match, use generic names
-                        if len(feature_names) != transformed_input.shape[1]:
-                            feature_names = [f"Feature {i}" for i in range(transformed_input.shape[1])]
-                        
-                        # Loop through trees to find feature contributions
-                        for tree in rf_classifier.estimators_:
-                            for feature_idx in range(transformed_input.shape[1]):
-                                feature_contribution = 0
-                                
-                                # This is a simplified approach - in reality, we would need
-                                # to traverse the tree to get accurate contributions
-                                if feature_idx in tree.feature_importances_.nonzero()[0]:
-                                    feature_contribution = tree.feature_importances_[feature_idx]
-                                
-                                if len(feature_contributions) <= feature_idx:
-                                    feature_contributions.append(feature_contribution)
-                                else:
-                                    feature_contributions[feature_idx] += feature_contribution
-                        
-                        # Normalize contributions
-                        feature_contributions = [fc / len(rf_classifier.estimators_) for fc in feature_contributions]
-                        
-                        # Create a dataframe of feature contributions
-                        contrib_df = pd.DataFrame({
+                        feature_contributions = pd.DataFrame({
                             'Feature': feature_names,
-                            'Contribution': feature_contributions
+                            'Importance': rf_classifier.feature_importances_
                         })
                         
-                        # Sort and display top contributors
-                        contrib_df = contrib_df.sort_values('Contribution', ascending=False).head(10)
+                        feature_contributions = feature_contributions.sort_values('Importance', ascending=False).head(10)
                         
-                        # Plot
                         fig, ax = plt.subplots(figsize=(10, 6))
-                        sns.barplot(x='Contribution', y='Feature', data=contrib_df, ax=ax)
+                        sns.barplot(x='Importance', y='Feature', data=feature_contributions, ax=ax)
                         ax.set_title('Top Features Influencing This Decision')
                         st.pyplot(fig)
-                        
-                    except Exception as e:
-                        st.error(f"Could not determine feature contributions: {str(e)}")
-                        st.info("Feature contributions are only available for the Random Forest model.")
-                else:
-                    st.info("Feature contributions are only available for the Random Forest model. Please select Random Forest to see detailed explanations.")
+                    except:
+                        st.info("Feature contributions could not be calculated.")
                 
-                # Show general rules for credit approval
                 st.subheader("General Credit Approval Guidelines")
                 st.markdown("""
-                Credit card applications are typically evaluated based on the following factors:
+                Credit card applications are typically evaluated based on:
                 
-                - **Credit History**: Length and quality of credit history
-                - **Income**: Stable source and sufficient level of income
-                - **Debt-to-Income Ratio**: Lower ratios are preferred
-                - **Employment Status**: Stable employment history
-                - **Age**: Must meet minimum age requirements
-                - **Residence**: Stability of residence
+                - **Income Level**: Higher and stable income increases approval chances.
+                - **Employment Status**: Stable employment history is preferred.
+                - **Credit History**: Good repayment history is crucial.
+                - **Age and Family Status**: Certain demographics may influence decisions.
+                - **Housing and Assets**: Ownership of property or cars can be positive factors.
                 
-                The model has been trained on historical approval data and uses patterns in the data to make predictions.
+                The model uses these patterns to predict approval likelihood.
                 """)
 
-# Function to run the app
+# Main function
 def main():
-    pass  # All the app logic is already in the main body
+    pass
 
 if __name__ == "__main__":
     main()
