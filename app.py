@@ -79,110 +79,49 @@ if 'preprocessor' not in st.session_state:
 # Function to load dataset
 @st.cache_data
 def load_credit_data():
-    """Load the Credit Card Approval Prediction dataset or generate a dummy dataset"""
-    try:
-        # Check for local dataset files
-        data_dir = "data"
-        application_path = os.path.join(data_dir, "application_record.csv")
-        credit_path = os.path.join(data_dir, "credit_record.csv")
-        
-        if os.path.exists(application_path) and os.path.exists(credit_path):
-            application_df = pd.read_csv(application_path)
-            credit_df = pd.read_csv(credit_path)
-        else:
-            # Provide instructions for downloading dataset
-            st.warning("""
-            Dataset files not found locally. Please download the Credit Card Approval Prediction dataset from Kaggle:
-            1. Visit https://www.kaggle.com/datasets/rikdifos/credit-card-approval-prediction
-            2. Download `application_record.csv` and `credit_record.csv`
-            3. Place them in a `data` folder in the same directory as this script
-            Falling back to a dummy dataset for now.
-            """)
-            raise FileNotFoundError("Local dataset files not found")
-        
-        # Process credit data to determine credit risk
-        credit_df['credit_risk'] = credit_df['STATUS'].apply(
-            lambda x: 0 if x in ['2', '3', '4', '5'] else 1 if x in ['0', '1', 'C'] else np.nan
-        )
-        
-        # Aggregate credit risk per ID
-        credit_risk = credit_df.groupby('ID')['credit_risk'].min().reset_index()
-        
-        # Merge with application data
-        df = application_df.merge(credit_risk, on='ID', how='inner')
-        
-        # Drop rows with missing credit_risk
-        df = df.dropna(subset=['credit_risk'])
-        
-        # Convert credit_risk to integer
-        df['credit_risk'] = df['credit_risk'].astype(int)
-        
-        # Clean and preprocess data
-        df = df.drop(['ID'], axis=1)
-        
-        # Rename columns
-        df = df.rename(columns={
-            'CODE_GENDER': 'gender',
-            'FLAG_OWN_CAR': 'own_car',
-            'FLAG_OWN_REALTY': 'own_realty',
-            'CNT_CHILDREN': 'children_count',
-            'AMT_INCOME_TOTAL': 'income_total',
-            'NAME_INCOME_TYPE': 'income_type',
-            'NAME_EDUCATION_TYPE': 'education',
-            'NAME_FAMILY_STATUS': 'family_status',
-            'NAME_HOUSING_TYPE': 'housing_type',
-            'DAYS_BIRTH': 'days_birth',
-            'DAYS_EMPLOYED': 'days_employed',
-            'FLAG_MOBIL': 'has_mobile',
-            'FLAG_WORK_PHONE': 'work_phone',
-            'FLAG_PHONE': 'phone',
-            'FLAG_EMAIL': 'email',
-            'OCCUPATION_TYPE': 'occupation',
-            'CNT_FAM_MEMBERS': 'family_members'
-        })
-        
-        # Convert days to years
-        df['age_years'] = -df['days_birth'] / 365.25
-        df['employment_years'] = -df['days_employed'] / 365.25
-        df = df.drop(['days_birth', 'days_employed'], axis=1)
-        
-        # Handle unrealistic employment years
-        df.loc[df['employment_years'] < 0, 'employment_years'] = 0
-        
-        # Convert binary columns to strings
-        df['gender'] = df['gender'].map({'M': 'Male', 'F': 'Female'})
-        df['own_car'] = df['own_car'].map({'Y': 'Yes', 'N': 'No'})
-        df['own_realty'] = df['own_realty'].map({'Y': 'Yes', 'N': 'No'})
-        df['has_mobile'] = df['has_mobile'].map({1: 'Yes', 0: 'No'})
-        df['work_phone'] = df['work_phone'].map({1: 'Yes', 0: 'No'})
-        df['phone'] = df['phone'].map({1: 'Yes', 0: 'No'})
-        df['email'] = df['email'].map({1: 'Yes', 0: 'No'})
-        
-        return df
-    except Exception as e:
-        st.error(f"Error loading dataset: {e}. Using dummy dataset instead.")
-        # Generate a dummy dataset
-        dummy_data = pd.DataFrame({
-            'gender': np.random.choice(['Male', 'Female'], 1000),
-            'own_car': np.random.choice(['Yes', 'No'], 1000),
-            'own_realty': np.random.choice(['Yes', 'No'], 1000),
-            'children_count': np.random.randint(0, 5, 1000),
-            'income_total': np.random.uniform(20000, 200000, 1000),
-            'income_type': np.random.choice(['Working', 'Commercial associate', 'Pensioner', 'State servant', 'Student'], 1000),
-            'education': np.random.choice(['Secondary / secondary special', 'Higher education', 'Incomplete higher'], 1000),
-            'family_status': np.random.choice(['Married', 'Single / not married', 'Civil marriage', 'Widow', 'Separated'], 1000),
-            'housing_type': np.random.choice(['House / apartment', 'Rented apartment', 'Municipal apartment'], 1000),
-            'has_mobile': np.random.choice(['Yes', 'No'], 1000),
-            'work_phone': np.random.choice(['Yes', 'No'], 1000),
-            'phone': np.random.choice(['Yes', 'No'], 1000),
-            'email': np.random.choice(['Yes', 'No'], 1000),
-            'occupation': np.random.choice(['Laborers', 'Managers', 'Sales staff', 'Core staff'], 1000),
-            'family_members': np.random.randint(1, 6, 1000),
-            'age_years': np.random.uniform(20, 70, 1000),
-            'employment_years': np.random.uniform(0, 40, 1000),
-            'credit_risk': np.random.randint(0, 2, 1000)
-        })
-        return dummy_data
+    """Load the Credit Card Approval dataset"""
+    np.random.seed(42)
+    n_samples = 1000
+    approval_rate = 0.6
+    y = np.random.choice([0, 1], size=n_samples, p=[1 - approval_rate, approval_rate])
+    approved_idx = np.where(y == 1)[0]
+    denied_idx = np.where(y == 0)[0]
+    
+    # Generate numerical features
+    income_total = np.zeros(n_samples)
+    income_total[approved_idx] = np.random.normal(100000, 30000, len(approved_idx))
+    income_total[denied_idx] = np.random.normal(50000, 20000, len(denied_idx))
+    income_total = np.clip(income_total, 10000, None)
+    
+    employment_years = np.zeros(n_samples)
+    employment_years[approved_idx] = np.random.normal(10, 5, len(approved_idx))
+    employment_years[denied_idx] = np.random.normal(3, 2, len(denied_idx))
+    employment_years = np.clip(employment_years, 0, None)
+    
+    age_years = np.zeros(n_samples)
+    age_years[approved_idx] = np.random.normal(40, 10, len(approved_idx))
+    age_years[denied_idx] = np.random.normal(30, 10, len(denied_idx))
+    age_years = np.clip(age_years, 18, None)
+    
+    # Generate categorical features
+    own_car = np.zeros(n_samples, dtype=object)
+    own_car[approved_idx] = np.random.choice(['Yes', 'No'], len(approved_idx), p=[0.7, 0.3])
+    own_car[denied_idx] = np.random.choice(['Yes', 'No'], len(denied_idx), p=[0.3, 0.7])
+    
+    own_realty = np.zeros(n_samples, dtype=object)
+    own_realty[approved_idx] = np.random.choice(['Yes', 'No'], len(approved_idx), p=[0.8, 0.2])
+    own_realty[denied_idx] = np.random.choice(['Yes', 'No'], len(denied_idx), p=[0.4, 0.6])
+    
+    # Create DataFrame
+    df = pd.DataFrame({
+        'income_total': income_total,
+        'employment_years': employment_years,
+        'age_years': age_years,
+        'own_car': own_car,
+        'own_realty': own_realty,
+        'credit_risk': y
+    })
+    return df
 
 # Function to preprocess data
 def preprocess_data(df, target_column='credit_risk'):
@@ -303,87 +242,6 @@ page = st.sidebar.radio("Go to", ["Data Overview", "Model Training", "Model Eval
 # Load dataset
 if st.session_state.dataset is None:
     st.session_state.dataset = load_credit_data()
-
-# Categorical mappings
-categorical_mappings = {
-    'gender': {
-        'Male': 'Male',
-        'Female': 'Female'
-    },
-    'own_car': {
-        'Yes': 'Yes',
-        'No': 'No'
-    },
-    'own_realty': {
-        'Yes': 'Yes',
-        'No': 'No'
-    },
-    'income_type': {
-        'Working': 'Working',
-        'Commercial associate': 'Commercial associate',
-        'Pensioner': 'Pensioner',
-        'State servant': 'State servant',
-        'Student': 'Student'
-    },
-    'education': {
-        'Secondary': 'Secondary / secondary special',
-        'Higher education': 'Higher education',
-        'Incomplete higher': 'Incomplete higher',
-        'Lower secondary': 'Lower secondary',
-        'Academic degree': 'Academic degree'
-    },
-    'family_status': {
-        'Married': 'Married',
-        'Single': 'Single / not married',
-        'Civil marriage': 'Civil marriage',
-        'Widow': 'Widow',
-        'Separated': 'Separated'
-    },
-    'housing_type': {
-        'House / apartment': 'House / apartment',
-        'Rented apartment': 'Rented apartment',
-        'Municipal apartment': 'Municipal apartment',
-        'With parents': 'With parents',
-        'Co-op apartment': 'Co-op apartment',
-        'Office apartment': 'Office apartment'
-    },
-    'has_mobile': {
-        'Yes': 'Yes',
-        'No': 'No'
-    },
-    'work_phone': {
-        'Yes': 'Yes',
-        'No': 'No'
-    },
-    'phone': {
-        'Yes': 'Yes',
-        'No': 'No'
-    },
-    'email': {
-        'Yes': 'Yes',
-        'No': 'No'
-    },
-    'occupation': {
-        'Laborers': 'Laborers',
-        'Core staff': 'Core staff',
-        'Managers': 'Managers',
-        'Sales staff': 'Sales staff',
-        'High skill tech staff': 'High skill tech staff',
-        'Accountants': 'Accountants',
-        'Medicine staff': 'Medicine staff',
-        'Private service staff': 'Private service staff',
-        'Drivers': 'Drivers',
-        'Security staff': 'Security staff',
-        'Cleaning staff': 'Cleaning staff',
-        'Cooking staff': 'Cooking staff',
-        'Waiters/barmen staff': 'Waiters/barmen staff',
-        'Low-skill Laborers': 'Low-skill Laborers',
-        'HR staff': 'HR staff',
-        'Secretaries': 'Secretaries',
-        'IT staff': 'IT staff',
-        'Realty agents': 'Realty agents'
-    }
-}
 
 # Data Overview Page
 if page == "Data Overview":
@@ -675,7 +533,7 @@ elif page == "Prediction":
         selected_model = "Meta Learner"
         st.markdown("<h3 class='sub-header'>Enter Application Details</h3>", unsafe_allow_html=True)
         
-        df = df = st.session_state.dataset
+        df = st.session_state.dataset
         input_data = {}
         
         categorical_features = df.select_dtypes(include=['object']).columns.tolist()
@@ -702,22 +560,12 @@ elif page == "Prediction":
         with col2:
             st.subheader("Categorical Features")
             for feature in categorical_features:
-                if feature in categorical_mappings:
-                    mapping = categorical_mappings[feature]
-                    descriptions = list(mapping.values())
-                    selected_description = st.selectbox(
-                        f"{feature.replace('_', ' ').title()}", 
-                        descriptions, 
-                        index=0
-                    )
-                    input_data[feature] = selected_description
-                else:
-                    options = df[feature].dropna().unique().tolist()
-                    input_data[feature] = st.selectbox(
-                        f"{feature.replace('_', ' ').title()}", 
-                        options, 
-                        index=0
-                    )
+                options = df[feature].dropna().unique().tolist()
+                input_data[feature] = st.selectbox(
+                    f"{feature.replace('_', ' ').title()}", 
+                    options, 
+                    index=0
+                )
         
         input_df = pd.DataFrame([input_data])
         
@@ -808,9 +656,9 @@ elif page == "Prediction":
                 
                 - **Income Level**: Higher and stable income increases approval chances.
                 - **Employment Status**: Stable employment history is preferred.
-                - **Credit History**: Good repayment history is crucial.
-                - **Age and Family Status**: Certain demographics may influence decisions.
-                - **Housing and Assets**: Ownership of property or cars can be positive factors.
+                - **Age**: Certain age groups may have different approval rates.
+                - **Car Ownership**: Owning a car can be a positive factor.
+                - **Realty Ownership**: Owning real estate can be a positive factor.
                 
                 The model uses these patterns to predict approval likelihood.
                 """)
